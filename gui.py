@@ -161,9 +161,18 @@ def run_ai_schedule():
 app = ctk.CTk()
 app.title("Daily Task Manager")
 app.geometry("700x700")
-# add a title label at the top of the window with a larger font size and bold styling for emphasis
-title = ctk.CTkLabel(app, text="Daily Task Manager", font=("Arial", 22, "bold"))
-title.pack(pady=20)
+# add a title label at the top of the window
+# Header frame
+header_frame = ctk.CTkFrame(app, fg_color="#6a5acd", corner_radius=15)
+header_frame.pack(fill="x", pady=10, padx=10)
+
+# Main title
+title = ctk.CTkLabel(header_frame, text="Daily Task Manager", font=ctk.CTkFont(size=28, weight="bold"), text_color="white")
+title.pack(pady=(10,0))
+
+# Subtitle
+subtitle = ctk.CTkLabel(header_frame, text="Plan your day efficiently and prevent burnout!", font=ctk.CTkFont(size=14, weight="normal"), text_color="white")
+subtitle.pack(pady=(0,10))
 
 # Make the window scrollable 
 main_frame = ctk.CTkScrollableFrame(app)
@@ -277,7 +286,7 @@ time_radio.pack(side="left", padx=10)
 urgency_radio = ctk.CTkRadioButton(sort_frame, text="Sort by Urgency", variable=sort_var, value="urgency")
 urgency_radio.pack(side="left", padx=10)
 # create radio button for sorting by ollama's language model and pack it into the sort frame
-ollama_radio = ctk.CTkRadioButton(sort_frame, text="Smart Schedule", variable=sort_var, value="ai")
+ollama_radio = ctk.CTkRadioButton(sort_frame, text="✨ Smart Schedule", variable=sort_var, value="ai")
 ollama_radio.pack(side="left", padx=10)
 
 #### Generate Schedule Button ####
@@ -291,6 +300,10 @@ generate_btn.pack(pady=15)
 # create a textbox to display the generated schedule to the user after they click the "Generate Schedule" button, showing the start time and the scheduled tasks with their respective times
 output = ctk.CTkTextbox(main_frame, height=250)
 output.pack(fill="both", expand=True, pady=10)
+
+
+
+
 
 # start the main event loop to run the application
 app.mainloop()
