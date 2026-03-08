@@ -1,11 +1,13 @@
 import customtkinter as ctk
+import ollama
+import threading
 
 # Set appearance and theme
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("lavender.json")
 
 #### Main functionality ####
-# dictonary to store user inputs and calculated values
+# dictionary to store user inputs and calculated values
 d = { 
     'tasks': [],
     'times': [],
@@ -23,68 +25,143 @@ def minutes_to_time(mins):
     hours = mins // 60
     minutes = mins % 60
     return f"{hours:02d}:{minutes:02d}"
-
-# function to add task to dictonary and display in task list
+# function to add a task to the list based on user input from the GUI, with validation for empty fields and non-numeric time input, and updates the task list display in the GUI
 def add_task():
-    name = task_name.get()
-    time = task_time.get()
+    # get user input from the task name, time, and urgency fields in the GUI
+    name = task_name.get().strip()
+    time = task_time.get().strip()
     urgency = round(urgency_slider.get())
-    # basic validation to ensure all fields are filled and time is a number
-    if name and time and urgency:
-        d['tasks'].append(name)
-        d['times'].append(int(time))
-        d['urgency'].append(int(urgency))
-        # display task in task list
-        task_list.insert("end", f"{name} | {time} min | urgency {urgency}\n")
-        # clear input fields for next entry
-        task_name.delete(0, "end")
+
+    # Validation
+    # check name and time are not empty
+    if not name or not time:
+        output.insert("end", "Please enter both task name and time.\n")
+        return
+    # check time is a number
+    if not time.isdigit():
+        output.insert("end", f"Invalid time '{time}'. Please enter a number.\n")
         task_time.delete(0, "end")
-        urgency_slider.set(5)
+        return
+    # once validated, add the task to the dictionary and update the task list display in the GUI
+    d['tasks'].append(name)
+    d['times'].append(int(time))
+    d['urgency'].append(int(urgency))
+
+    # update the task list display in the GUI with the new task, showing its name, time requirement, and urgency level
+    task_list.insert("end", f"{name} | {time} min | urgency {urgency}\n")
+    task_name.delete(0, "end")
+    task_time.delete(0, "end")
+    urgency_slider.set(5)
 
 # function to generate schedule based on user inputs and sorting preference
 def generate_schedule():
-    # clear previous output
+    # clear the output textbox before generating a new schedule
     output.delete("1.0", "end")
     start_entry = f"{start_hr.get()}:{start_min.get()}"
     end_entry = f"{end_hour.get()}:{end_min.get()}"
-
-    # convert start and end times to minutes and calculate total working time
+    # convert start and end times to minutes and calculate total working time available
     d['start'] = time_to_minutes(start_entry)
     d['end'] = time_to_minutes(end_entry)
     d['workingTime'] = d['end'] - d['start']
-
-    # check if total task time exceeds working time and display warning if it does
+    # check if total task time exceeds available working time and display a warning in the output textbox if so
     if d['workingTime'] < sum(d['times']):
         output.insert("end", "WARNING: Tasks exceed available working time!\n\n")
-
-    # sort tasks based on user preference (time or urgency)
+    # determine sorting preference from the radio buttons in the GUI and sort the tasks accordingly, either by time required, urgency level, or using ollama's language model for a smart schedule
     sort_choice = sort_var.get()
     if sort_choice == "time":
+        # sort by duration
         sorted_tasks = sorted(zip(d['tasks'], d['times']), key=lambda x: x[1], reverse=True)
+    elif sort_choice == 'ai':
+        # let ai sort it 
+        run_ai_schedule()
+        return
     else:
-        sorted_tasks = sorted(zip(d['tasks'], d['urgency']), key=lambda x: x[1], reverse=True)
-   
-    # create a timetable based on sorted tasks and calculate start times for each task
-    taskTimetable =[d['start']]
-    # calculate start time for each task by adding the duration of the previous task to the start time of the previous task
-    for i in range(len(sorted_tasks)):
-        taskTimetable.append(taskTimetable[i] + sorted_tasks[i][1])
-    # convert timetable from minutes back to time strings for output
-    for i in range(len(taskTimetable)):
-        taskTimetable[i] = minutes_to_time(taskTimetable[i])
-    # display the generated schedule in the output textbox
+        # sort by urgency
+        sorted_tasks = sorted(zip(d['tasks'], d['times'], d['urgency']), key=lambda x: x[2], reverse=True)
+        # reduce to (task, duration) for scheduling loop
+        sorted_tasks = [(task, duration) for task, duration, urgency in sorted_tasks]
+    # Initialize
+    taskTimetable = []
+    current_time = d['start']
+    sinceBreak = 0
+    # Define break rules
+    BREAK_INTERVAL = 90
+    BREAK_DURATION = 15
+    # Loop through sorted tasks and build the timetable, inserting breaks as needed based on the defined break rules
+    for task, duration in sorted_tasks:
+        # Insert breaks as needed before task
+        while sinceBreak >= BREAK_INTERVAL:
+            taskTimetable.append((current_time, "Break"))
+            current_time += BREAK_DURATION
+            sinceBreak = 0
+
+        taskTimetable.append((current_time, task))
+        current_time += duration
+        sinceBreak += duration
+
+    # Display schedule
     output.insert("end", "Your Task Schedule\n")
-    output.insert("end", f"Start time: {taskTimetable[0]}\n\n")
-    # loop through sorted tasks and display each task with its corresponding start time in the output textbox
-    for i in range(len(sorted_tasks)):
-        output.insert("end", f"{taskTimetable[i+1]}  {sorted_tasks[i][0]}\n")
+    output.insert("end", f"Start time: {minutes_to_time(d['start'])}\n\n")
+    for time_min, task in taskTimetable:
+        output.insert("end", f"{minutes_to_time(time_min)}  {task}\n")
 
+# function to generate schedule using ollama's language model based on user inputs and rules for scheduling
+def ollama_schedule():
+    tasks = ''
+    for task, time, urgency in zip(d['tasks'], d['times'], d['urgency']):
+        tasks += f"{task} (time: {time} min, urgency: {urgency}/10)\n"
+    # create a prompt for the language model that includes the user's tasks, their time requirements, urgency levels, and the rules for scheduling
+    prompt = f"""
+    I have the following tasks to complete today. Each task includes the estimated duration in minutes and an urgency rating from 1 (least urgent) to 10 (most urgent):
 
+    Tasks:
+    {tasks}
+
+    My workday starts at {minutes_to_time(d['start'])} and ends at {minutes_to_time(d['end'])}.
+
+    Please generate a detailed timetable for me following these rules:
+
+    1. Prioritize tasks based on urgency, but try to fit in as many tasks as possible within the available working time.
+    2. Avoid long stretches of continuous work. Schedule a 15-minute break every 90 minutes of work.
+    3. If possible, alternate between long and short tasks to maintain focus and energy.
+    4. Do not split tasks in the middle; each task should be scheduled in a single block.
+    5. Include start and end times for each task and break in HH:MM format.
+    6. If not all tasks can fit, clearly indicate which tasks could not be scheduled.
+    7. Format the output in a clean timetable, e.g.:
+    09:00 - 09:45 Task A
+    09:45 - 10:30 Task B
+    10:30 - 10:45 Break
+    ...
+
+    Please create the most efficient, balanced schedule possible that maximizes productivity and prevents burnout.
+    """
+    # send the prompt to the language model and return the generated schedule as a string
+    response = ollama.chat(
+        model ='llama3',
+        messages=[{'role': 'user', 'content': prompt}]
+    )
+    # return the respose from the language model
+    return response['message']['content']
+
+# function to run the ollama scheduling in a separate thread to avoid freezing the GUI while waiting for the response from the language model
+def run_ai_schedule():
+    output.delete("1.0", "end")
+    output.insert("end", "Generating smart schedule...\nPlease wait.\n")
+    # define a worker function to run the ollama scheduling and update the output textbox with the generated schedule once it's received
+    def worker():
+        schedule = ollama_schedule()
+
+        output.delete("1.0", "end")
+        output.insert("end", schedule)
+    # create and start a new thread to run the worker function
+    thread = threading.Thread(target=worker)
+    thread.start()
 #### Main window setup ####
+# create the main application window using customtkinter, set its title and size, and add a title label at the top of the window
 app = ctk.CTk()
 app.title("Daily Task Manager")
 app.geometry("700x700")
-
+# add a title label at the top of the window with a larger font size and bold styling for emphasis
 title = ctk.CTkLabel(app, text="Daily Task Manager", font=("Arial", 22, "bold"))
 title.pack(pady=20)
 
@@ -157,15 +234,16 @@ task_time.pack(pady=3)
 
 #urgency slider input
 ctk.CTkLabel(task_frame, text="Urgency").pack(pady=3)
-
+# create a slider for the user to input the urgency level of the task, with a range from 1 to 10 and a default value of 5, and display the current value of the slider in a label above it
 urgency_value = ctk.StringVar(value="5")
-
 urgency_label = ctk.CTkLabel(task_frame, textvariable=urgency_value)
 urgency_label.pack()
 
+# function to update the displayed urgency value when the slider is moved, rounding the slider value to the nearest whole number for display
 def update_urgency(value):
     urgency_value.set(str(round(value)))
 
+# create the urgency slider with a range from 1 to 10, allowing only whole number steps, and set its command to the update_urgency function to update the displayed value when the slider is moved
 urgency_slider = ctk.CTkSlider(
     task_frame,
     from_=1,
@@ -198,14 +276,19 @@ time_radio.pack(side="left", padx=10)
 # create radio button for sorting by urgency level and pack it into the sort frame
 urgency_radio = ctk.CTkRadioButton(sort_frame, text="Sort by Urgency", variable=sort_var, value="urgency")
 urgency_radio.pack(side="left", padx=10)
+# create radio button for sorting by ollama's language model and pack it into the sort frame
+ollama_radio = ctk.CTkRadioButton(sort_frame, text="Smart Schedule", variable=sort_var, value="ai")
+ollama_radio.pack(side="left", padx=10)
 
 #### Generate Schedule Button ####
 
+# create a button to generate the schedule based on the user inputs and sorting preference, and set its command to the generate_schedule function
 generate_btn = ctk.CTkButton(main_frame, text="Generate Schedule", command=generate_schedule)
 generate_btn.pack(pady=15)
 
 #### Output Schedule to the user ####
 
+# create a textbox to display the generated schedule to the user after they click the "Generate Schedule" button, showing the start time and the scheduled tasks with their respective times
 output = ctk.CTkTextbox(main_frame, height=250)
 output.pack(fill="both", expand=True, pady=10)
 
